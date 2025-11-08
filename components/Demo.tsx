@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { solveProblem } from '../services/geminiService';
 import type { OmegaResult, AgentMessage } from '../types';
@@ -19,18 +18,36 @@ const parseOmegaResponse = (markdown: string): OmegaResult | null => {
         const debateMatch = markdown.match(/🎭 MULTI-AGENT DEBATE - LIVE SESSION\n([\s\S]*?)\n\n🏆 CONSENSUS SOLUTION/);
         const solutionMatch = markdown.match(/🏆 CONSENSUS SOLUTION\n([\s\S]*)/);
 
-        if (!problemMatch || !analysisMatch || !debateMatch || !solutionMatch) return null;
+        if (!problemMatch || !analysisMatch || !debateMatch || !solutionMatch) {
+            console.error("Parsing Error: Could not find all required sections in the AI response.");
+            return null;
+        }
 
-        const debateMessages: AgentMessage[] = debateMatch[1].trim().split('\n').map(line => {
-            const agentEmoji = line.substring(0, line.indexOf(' '));
-            const message = line.substring(line.indexOf(':') + 1).trim().replace(/"/g, '');
-            let agentId: 'elara' | 'kairo' | 'riva' | 'orion' = 'elara';
-            if (agentEmoji.includes('🧪')) agentId = 'elara';
-            else if (agentEmoji.includes('⚙️')) agentId = 'kairo';
-            else if (agentEmoji.includes('📈')) agentId = 'riva';
-            else if (agentEmoji.includes('💻')) agentId = 'orion';
-            return { agentId, message };
-        });
+        const debateMessages: AgentMessage[] = debateMatch[1]
+            .trim()
+            .split('\n')
+            .map(line => {
+                const trimmedLine = line.trim();
+                if (!trimmedLine) return null;
+
+                const agentEmojiMatch = trimmedLine.match(/^(🧪|⚙️|📈|💻)/);
+                if (!agentEmojiMatch) return null;
+
+                const message = trimmedLine.substring(trimmedLine.indexOf(':') + 1).trim().replace(/"/g, '');
+                
+                let agentId: 'elara' | 'kairo' | 'riva' | 'orion' | null = null;
+                const emoji = agentEmojiMatch[0];
+                if (emoji.includes('🧪')) agentId = 'elara';
+                else if (emoji.includes('⚙️')) agentId = 'kairo';
+                else if (emoji.includes('📈')) agentId = 'riva';
+                else if (emoji.includes('💻')) agentId = 'orion';
+
+                if (!agentId || !message) return null;
+
+                return { agentId, message };
+            })
+            .filter((msg): msg is AgentMessage => msg !== null);
+
 
         const solutionText = solutionMatch[1].trim();
         const hypothesis = solutionText.match(/✅ HYPOTHESIS: (.*)/)?.[1] || '';
@@ -65,19 +82,24 @@ const Demo: React.FC = () => {
         if (result) {
             setDisplayedDebate([]);
             setShowSolution(false);
-            const timer = setTimeout(() => {
+            let intervalId: number;
+            const timerId = setTimeout(() => {
                 let i = 0;
-                const interval = setInterval(() => {
+                intervalId = window.setInterval(() => {
                     if (i < result.debate.length) {
                         setDisplayedDebate(prev => [...prev, result.debate[i]]);
                         i++;
                     } else {
-                        clearInterval(interval);
+                        clearInterval(intervalId);
                         setShowSolution(true);
                     }
                 }, 1500);
             }, 500);
-            return () => clearTimeout(timer);
+            
+            return () => {
+                clearTimeout(timerId);
+                clearInterval(intervalId);
+            };
         }
     }, [result]);
 
