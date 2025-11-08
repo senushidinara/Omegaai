@@ -28,7 +28,8 @@ const parseOmegaResponse = (markdown: string): OmegaResult | null => {
             .split('\n')
             .map(line => {
                 const trimmedLine = line.trim();
-                if (!trimmedLine) return null;
+                // Skip empty lines or lines that don't look like agent messages
+                if (!trimmedLine || !trimmedLine.includes(':')) return null;
 
                 const agentEmojiMatch = trimmedLine.match(/^(🧪|⚙️|📈|💻)/);
                 if (!agentEmojiMatch) return null;
@@ -42,6 +43,7 @@ const parseOmegaResponse = (markdown: string): OmegaResult | null => {
                 else if (emoji.includes('📈')) agentId = 'riva';
                 else if (emoji.includes('💻')) agentId = 'orion';
 
+                // Ensure both agentId and a non-empty message exist
                 if (!agentId || !message) return null;
 
                 return { agentId, message };
@@ -50,12 +52,20 @@ const parseOmegaResponse = (markdown: string): OmegaResult | null => {
 
 
         const solutionText = solutionMatch[1].trim();
-        const hypothesis = solutionText.match(/✅ HYPOTHESIS: (.*)/)?.[1] || '';
-        const implementation = solutionText.match(/🛠️ IMPLEMENTATION: (.*)/)?.[1] || '';
-        const expectedImpact = solutionText.match(/📊 EXPECTED IMPACT: (.*)/)?.[1] || '';
-        const confidenceScore = solutionText.match(/🎯 CONFIDENCE SCORE: (.*)/)?.[1] || '';
-        const risks = solutionText.match(/⚠️ RISKS & MITIGATIONS: ([\s\S]*?)🔬 NEXT EXPERIMENTS/)?.[1]?.trim() || '';
-        const nextExperiments = solutionText.match(/🔬 NEXT EXPERIMENTS: (.*)/)?.[1] || '';
+        const nextMarkerPattern = '(?=\\n\\s*(?:✅|🛠️|📊|🎯|⚠️|🔬)|$)';
+
+        const hypothesis = (solutionText.match(new RegExp(`✅ HYPOTHESIS:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        const implementation = (solutionText.match(new RegExp(`🛠️ IMPLEMENTATION:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        const expectedImpact = (solutionText.match(new RegExp(`📊 EXPECTED IMPACT:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        const confidenceScore = (solutionText.match(new RegExp(`🎯 CONFIDENCE SCORE:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        const risks = (solutionText.match(new RegExp(`⚠️ RISKS & MITIGATIONS:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        const nextExperiments = (solutionText.match(new RegExp(`🔬 NEXT EXPERIMENTS:\\s*([\\s\\S]*?)${nextMarkerPattern}`))?.[1] || '').trim();
+        
+        // Final check to make sure core components were parsed
+        if (!hypothesis || !implementation) {
+            console.error("Parsing Error: Could not parse core solution fields.");
+            return null;
+        }
 
         return {
             problem: problemMatch[1].trim(),
@@ -79,28 +89,36 @@ const Demo: React.FC = () => {
     const resultsRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        if (result) {
-            setDisplayedDebate([]);
-            setShowSolution(false);
-            let intervalId: number;
-            const timerId = setTimeout(() => {
-                let i = 0;
-                intervalId = window.setInterval(() => {
-                    if (i < result.debate.length) {
-                        setDisplayedDebate(prev => [...prev, result.debate[i]]);
-                        i++;
-                    } else {
-                        clearInterval(intervalId);
-                        setShowSolution(true);
-                    }
-                }, 1500);
-            }, 500);
-            
-            return () => {
-                clearTimeout(timerId);
+        if (!result) return;
+
+        setDisplayedDebate([]);
+        setShowSolution(false);
+
+        let intervalId: number | undefined;
+
+        const timeoutId = setTimeout(() => {
+            let i = 0;
+            intervalId = window.setInterval(() => {
+                if (i < result.debate.length) {
+                    setDisplayedDebate(prev => [...prev, result.debate[i]]);
+                    i++;
+                } else {
+                    if (intervalId) clearInterval(intervalId);
+                    setShowSolution(true);
+                }
+            }, 1500);
+        }, 500);
+
+        // This robust cleanup function is crucial.
+        // It runs when the component unmounts or when `result` changes.
+        // It ensures that any pending timeouts or intervals are cleared,
+        // preventing race conditions and memory leaks.
+        return () => {
+            clearTimeout(timeoutId);
+            if (intervalId) {
                 clearInterval(intervalId);
-            };
-        }
+            }
+        };
     }, [result]);
 
      useEffect(() => {
